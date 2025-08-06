@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from calendar import monthrange
 from dotenv import load_dotenv
 import gspread
@@ -295,6 +295,9 @@ class AdvancedTelegramBot:
         self.application.add_handler(CommandHandler('month', self.month_summary_command))
         self.application.add_handler(CommandHandler('status', self.status_command))
         self.application.add_handler(CommandHandler('reset', self.reset_position_command))
+        self.application.add_handler(CommandHandler('today', self.today_command))
+        self.application.add_handler(CommandHandler('week', self.week_command))
+        self.application.add_handler(CommandHandler('daily', self.daily_command))
         self.application.add_handler(conv_handler)
     
     async def start_command(self, update: Update, context):
@@ -306,6 +309,9 @@ class AdvancedTelegramBot:
             "• `/quick` - Thêm nhanh (một dòng)\n"
             "• `/summary` - Xem tổng kết tháng hiện tại\n"
             "• `/month` - Xem tổng kết tháng cụ thể\n"
+            "• `/today` - Xem chi tiêu hôm nay\n"
+            "• `/week` - Xem chi tiêu tuần này\n"
+            "• `/daily` - Xem chi tiêu theo từng ngày\n"
             "• `/status` - Xem trạng thái bot\n"
             "• `/reset` - Reset vị trí theo dõi dòng\n"
             "• `/help` - Hiển thị hướng dẫn\n"
@@ -391,7 +397,10 @@ class AdvancedTelegramBot:
             "   Ví dụ: `/quick Cafe|35000|Giải trí|Anh Tài|Với bạn`\n\n"
             "🔹 **Xem báo cáo:**\n"
             "   `/summary` - Tổng kết tháng hiện tại\n"
-            "   `/month` - Danh sách tất cả các tháng\n\n"
+            "   `/month` - Danh sách tất cả các tháng\n"
+            "   `/today` - Chi tiêu hôm nay\n"
+            "   `/week` - Chi tiêu tuần này\n"
+            "   `/daily` - Chi tiêu theo từng ngày\n\n"
             "🔹 **Tính năng tự động:**\n"
             "   • Bot tự tạo sheet mới cho mỗi tháng\n"
             "   • Tính tổng chi tiêu theo danh mục/người\n"
@@ -611,6 +620,232 @@ class AdvancedTelegramBot:
         except Exception as e:
             logger.error(f"Error in reset command: {e}")
             await update.message.reply_text("❌ Có lỗi xảy ra khi reset vị trí!")
+    
+    def get_expenses_by_date_range(self, start_date, end_date, sheet_name=None):
+        """Get expenses within a date range"""
+        try:
+            if sheet_name is None:
+                sheet = self.current_sheet
+                sheet_name = sheet.title
+            else:
+                sheet = self.workbook.worksheet(sheet_name)
+            
+            # Get all data (excluding header)
+            all_data = sheet.get_all_values()[1:]
+            
+            # Filter rows by date range
+            filtered_rows = []
+            for row in all_data:
+                if len(row) >= 3 and row[0].strip() and row[2].strip():
+                    try:
+                        # Parse date (format: dd/mm/yyyy)
+                        row_date = datetime.strptime(row[0], '%d/%m/%Y').date()
+                        if start_date <= row_date <= end_date:
+                            # Check if amount is valid
+                            if row[2].replace(',', '').isdigit():
+                                filtered_rows.append(row)
+                    except ValueError:
+                        continue  # Skip invalid date formats
+            
+            return filtered_rows
+        except Exception as e:
+            logger.error(f"Error getting expenses by date range: {e}")
+            return []
+    
+    def calculate_summary_from_rows(self, rows):
+        """Calculate summary statistics from expense rows"""
+        if not rows:
+            return {
+                'total': 0,
+                'count': 0,
+                'average': 0,
+                'by_category': {},
+                'by_person': {}
+            }
+        
+        total = sum(int(row[2].replace(',', '')) for row in rows)
+        count = len(rows)
+        average = total / count if count > 0 else 0
+        
+        # Group by category
+        by_category = {}
+        for row in rows:
+            category = row[3] if len(row) > 3 and row[3].strip() else 'Khác'
+            amount = int(row[2].replace(',', ''))
+            by_category[category] = by_category.get(category, 0) + amount
+        
+        # Group by person
+        by_person = {}
+        for row in rows:
+            person = row[4] if len(row) > 4 and row[4].strip() else 'Không rõ'
+            amount = int(row[2].replace(',', ''))
+            by_person[person] = by_person.get(person, 0) + amount
+        
+        return {
+            'total': total,
+            'count': count,
+            'average': average,
+            'by_category': by_category,
+            'by_person': by_person
+        }
+    
+    async def today_command(self, update: Update, context):
+        """Handle /today command - show today's expenses"""
+        try:
+            today = date.today()
+            rows = self.get_expenses_by_date_range(today, today)
+            summary = self.calculate_summary_from_rows(rows)
+            
+            message = (
+                f"📅 **CHI TIÊU HÔM NAY ({today.strftime('%d/%m/%Y')})**\n\n"
+                f"💰 **Tổng chi tiêu:** {summary['total']:,} VNĐ\n"
+                f"📝 **Số giao dịch:** {summary['count']} lần\n"
+            )
+            
+            if summary['count'] > 0:
+                message += f"📈 **Trung bình/giao dịch:** {summary['average']:,.0f} VNĐ\n\n"
+                
+                # Show detailed transactions
+                message += "📋 **CHI TIẾT:\n"
+                for i, row in enumerate(rows, 1):
+                    amount = int(row[2].replace(',', ''))
+                    description = row[1] if len(row) > 1 else 'Không có mô tả'
+                    category = row[3] if len(row) > 3 else 'Khác'
+                    person = row[4] if len(row) > 4 else 'Không rõ'
+                    message += f"{i}. {description} - {amount:,} VNĐ ({category}) - {person}\n"
+                
+                if summary['by_category']:
+                    message += f"\n📂 **Theo danh mục:**\n"
+                    for category, amount in sorted(summary['by_category'].items(), key=lambda x: x[1], reverse=True):
+                        message += f"• {category}: {amount:,} VNĐ\n"
+            else:
+                message += "\n🎉 **Chưa có chi tiêu nào hôm nay!**"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in today command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy dữ liệu hôm nay!")
+    
+    async def week_command(self, update: Update, context):
+        """Handle /week command - show this week's expenses"""
+        try:
+            today = date.today()
+            # Get start of week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            end_of_week = start_of_week + timedelta(days=6)
+            
+            rows = self.get_expenses_by_date_range(start_of_week, end_of_week)
+            summary = self.calculate_summary_from_rows(rows)
+            
+            message = (
+                f"📊 **CHI TIÊU TUẦN NÀY**\n"
+                f"📅 ({start_of_week.strftime('%d/%m')} - {end_of_week.strftime('%d/%m/%Y')})\n\n"
+                f"💰 **Tổng chi tiêu:** {summary['total']:,} VNĐ\n"
+                f"📝 **Số giao dịch:** {summary['count']} lần\n"
+            )
+            
+            if summary['count'] > 0:
+                daily_avg = summary['total'] / 7
+                message += f"📈 **Trung bình/ngày:** {daily_avg:,.0f} VNĐ\n"
+                message += f"📈 **Trung bình/giao dịch:** {summary['average']:,.0f} VNĐ\n\n"
+                
+                # Group by day
+                daily_expenses = {}
+                for row in rows:
+                    row_date = datetime.strptime(row[0], '%d/%m/%Y').date()
+                    date_str = row_date.strftime('%d/%m (%A)')
+                    if date_str not in daily_expenses:
+                        daily_expenses[date_str] = []
+                    daily_expenses[date_str].append(row)
+                
+                message += "📅 **Chi tiết theo ngày:**\n"
+                for day_str in sorted(daily_expenses.keys()):
+                    day_rows = daily_expenses[day_str]
+                    day_total = sum(int(row[2].replace(',', '')) for row in day_rows)
+                    message += f"• {day_str}: {day_total:,} VNĐ ({len(day_rows)} giao dịch)\n"
+                
+                if summary['by_category']:
+                    message += f"\n📂 **Top danh mục:**\n"
+                    top_categories = sorted(summary['by_category'].items(), key=lambda x: x[1], reverse=True)[:5]
+                    for category, amount in top_categories:
+                        percentage = (amount / summary['total'] * 100)
+                        message += f"• {category}: {amount:,} VNĐ ({percentage:.1f}%)\n"
+            else:
+                message += "\n🎉 **Chưa có chi tiêu nào tuần này!**"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in week command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy dữ liệu tuần!")
+    
+    async def daily_command(self, update: Update, context):
+        """Handle /daily command - show daily breakdown for current month"""
+        try:
+            # Get current month data
+            all_rows = self.get_expenses_by_date_range(
+                date.today().replace(day=1),  # First day of month
+                date.today()  # Today
+            )
+            
+            if not all_rows:
+                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu tháng này!")
+                return
+            
+            # Group by date
+            daily_summary = {}
+            for row in all_rows:
+                row_date = datetime.strptime(row[0], '%d/%m/%Y').date()
+                date_str = row_date.strftime('%d/%m')
+                
+                if date_str not in daily_summary:
+                    daily_summary[date_str] = {
+                        'total': 0,
+                        'count': 0,
+                        'transactions': []
+                    }
+                
+                amount = int(row[2].replace(',', ''))
+                daily_summary[date_str]['total'] += amount
+                daily_summary[date_str]['count'] += 1
+                daily_summary[date_str]['transactions'].append({
+                    'description': row[1] if len(row) > 1 else 'Không có mô tả',
+                    'amount': amount,
+                    'category': row[3] if len(row) > 3 else 'Khác',
+                    'person': row[4] if len(row) > 4 else 'Không rõ'
+                })
+            
+            # Sort by date
+            sorted_days = sorted(daily_summary.keys(), key=lambda x: datetime.strptime(x + '/2025', '%d/%m/%Y'))
+            
+            message = f"📊 **CHI TIÊU THEO NGÀY - {self.current_sheet.title.upper()}**\n\n"
+            
+            total_month = sum(day['total'] for day in daily_summary.values())
+            total_transactions = sum(day['count'] for day in daily_summary.values())
+            
+            message += f"💰 **Tổng tháng:** {total_month:,} VNĐ ({total_transactions} giao dịch)\n"
+            message += f"📈 **Trung bình/ngày:** {total_month/len(sorted_days):,.0f} VNĐ\n\n"
+            
+            # Show daily breakdown
+            for date_str in sorted_days[-10:]:  # Show last 10 days to avoid too long message
+                day_data = daily_summary[date_str]
+                message += f"📅 **{date_str}**: {day_data['total']:,} VNĐ ({day_data['count']} giao dịch)\n"
+                
+                # Show top 3 transactions for the day
+                top_transactions = sorted(day_data['transactions'], key=lambda x: x['amount'], reverse=True)
+                for i, trans in enumerate(top_transactions, 1):
+                    message += f"   {i}. {trans['description']} - {trans['amount']:,} VNĐ ({trans['category']})\n"
+                message += "\n"
+            
+            if len(sorted_days) > 10:
+                message += f"📝 *Hiển thị 10 ngày gần nhất. Tổng có {len(sorted_days)} ngày có chi tiêu.*"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in daily command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy dữ liệu hàng ngày!")
     
     async def check_for_new_rows(self):
         """Check for new rows and send notifications"""
