@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 DESCRIPTION, AMOUNT, CATEGORY, PERSON, NOTE = range(5)
 BUDGET_AMOUNT, SEARCH_QUERY, EDIT_SELECT, EDIT_FIELD, EDIT_VALUE = range(5, 10)
 
+def normalize_text(text):
+    """
+    Utility function to normalize text for case-insensitive comparisons.
+    Converts to lowercase and strips whitespace for consistent string operations.
+    """
+    if not text or not isinstance(text, str):
+        return ''
+    return text.lower().strip()
+
 class AdvancedTelegramBot:
     def __init__(self):
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -324,26 +333,44 @@ class AdvancedTelegramBot:
             count = len(data_rows)
             average = total / count if count > 0 else 0
             
-            # Group by category
+            # Group by category - using case-insensitive normalization
             by_category = {}
             for row in data_rows:
-                category = row[3] if len(row) > 3 else 'Khác'
+                # Normalize category name for case-insensitive grouping
+                category = normalize_text(row[3]) if len(row) > 3 and row[3].strip() else 'khác'
+                # Keep original case for display, but use normalized key for grouping
+                display_category = row[3].strip() if len(row) > 3 and row[3].strip() else 'Khác'
                 amount = int(row[2].replace(',', ''))
-                by_category[category] = by_category.get(category, 0) + amount
+                
+                # Use normalized key but update with display value if this is the first entry
+                if category not in by_category:
+                    by_category[category] = {'amount': 0, 'display_name': display_category}
+                by_category[category]['amount'] += amount
             
-            # Group by person
+            # Group by person - using case-insensitive normalization
             by_person = {}
             for row in data_rows:
-                person = row[4] if len(row) > 4 else 'Không rõ'
+                # Normalize person name for case-insensitive grouping
+                person = normalize_text(row[4]) if len(row) > 4 and row[4].strip() else 'không rõ'
+                # Keep original case for display, but use normalized key for grouping
+                display_person = row[4].strip() if len(row) > 4 and row[4].strip() else 'Không rõ'
                 amount = int(row[2].replace(',', ''))
-                by_person[person] = by_person.get(person, 0) + amount
+                
+                # Use normalized key but update with display value if this is the first entry
+                if person not in by_person:
+                    by_person[person] = {'amount': 0, 'display_name': display_person}
+                by_person[person]['amount'] += amount
+            
+            # Convert back to simple format for compatibility
+            final_by_category = {data['display_name']: data['amount'] for data in by_category.values()}
+            final_by_person = {data['display_name']: data['amount'] for data in by_person.values()}
             
             return {
                 'total': total,
                 'count': count,
                 'average': average,
-                'by_category': by_category,
-                'by_person': by_person,
+                'by_category': final_by_category,
+                'by_person': final_by_person,
                 'sheet_name': sheet_name
             }
             
@@ -814,26 +841,44 @@ class AdvancedTelegramBot:
         count = len(rows)
         average = total / count if count > 0 else 0
         
-        # Group by category
+        # Group by category - using case-insensitive normalization
         by_category = {}
         for row in rows:
-            category = row[3] if len(row) > 3 and row[3].strip() else 'Khác'
+            # Normalize category name for case-insensitive grouping
+            category = normalize_text(row[3]) if len(row) > 3 and row[3].strip() else 'khác'
+            # Keep original case for display, but use normalized key for grouping
+            display_category = row[3].strip() if len(row) > 3 and row[3].strip() else 'Khác'
             amount = int(row[2].replace(',', ''))
-            by_category[category] = by_category.get(category, 0) + amount
+            
+            # Use normalized key but update with display value if this is the first entry
+            if category not in by_category:
+                by_category[category] = {'amount': 0, 'display_name': display_category}
+            by_category[category]['amount'] += amount
         
-        # Group by person
+        # Group by person - using case-insensitive normalization  
         by_person = {}
         for row in rows:
-            person = row[4] if len(row) > 4 and row[4].strip() else 'Không rõ'
+            # Normalize person name for case-insensitive grouping
+            person = normalize_text(row[4]) if len(row) > 4 and row[4].strip() else 'không rõ'
+            # Keep original case for display, but use normalized key for grouping
+            display_person = row[4].strip() if len(row) > 4 and row[4].strip() else 'Không rõ'
             amount = int(row[2].replace(',', ''))
-            by_person[person] = by_person.get(person, 0) + amount
+            
+            # Use normalized key but update with display value if this is the first entry
+            if person not in by_person:
+                by_person[person] = {'amount': 0, 'display_name': display_person}
+            by_person[person]['amount'] += amount
+        
+        # Convert back to simple format for compatibility
+        final_by_category = {data['display_name']: data['amount'] for data in by_category.values()}
+        final_by_person = {data['display_name']: data['amount'] for data in by_person.values()}
         
         return {
             'total': total,
             'count': count,
             'average': average,
-            'by_category': by_category,
-            'by_person': by_person
+            'by_category': final_by_category,
+            'by_person': final_by_person
         }
     
     async def today_command(self, update: Update, context):
@@ -1210,7 +1255,7 @@ class AdvancedTelegramBot:
         return ConversationHandler.END
     
     async def process_search_query(self, update, query):
-        """Process search query and return results"""
+        """Process search query and return results - all text searches are case-insensitive"""
         try:
             # Get all data from current month
             all_data = self.current_sheet.get_all_values()[1:]  # Skip header
@@ -1236,10 +1281,10 @@ class AdvancedTelegramBot:
                         except ValueError:
                             pass
                     else:
-                        # Text search in all fields
-                        search_text = query.lower()
+                        # Text search in all fields - case-insensitive using normalize_text
+                        search_text = normalize_text(query)
                         for field in row[:6]:  # Search in all main fields
-                            if search_text in field.lower():
+                            if search_text in normalize_text(field):
                                 match = True
                                 break
                     
@@ -1323,7 +1368,7 @@ class AdvancedTelegramBot:
                 await update.message.reply_text(f"❌ Không tìm thấy dữ liệu phù hợp với bộ lọc: `{text}`")
                 return
             
-            # Calculate summary
+            # Calculate summary - using case-insensitive normalization
             total_amount = 0
             categories = {}
             persons = {}
@@ -1333,11 +1378,24 @@ class AdvancedTelegramBot:
                     amount = int(row[2].replace(',', ''))
                     total_amount += amount
                     
-                    category = row[3] if len(row) > 3 else 'Khác'
-                    person = row[4] if len(row) > 4 else 'Không rõ'
+                    # Normalize category name for case-insensitive grouping
+                    category = normalize_text(row[3]) if len(row) > 3 and row[3].strip() else 'khác'
+                    # Keep original case for display, but use normalized key for grouping
+                    display_category = row[3].strip() if len(row) > 3 and row[3].strip() else 'Khác'
                     
-                    categories[category] = categories.get(category, 0) + amount
-                    persons[person] = persons.get(person, 0) + amount
+                    # Normalize person name for case-insensitive grouping
+                    person = normalize_text(row[4]) if len(row) > 4 and row[4].strip() else 'không rõ'
+                    # Keep original case for display, but use normalized key for grouping
+                    display_person = row[4].strip() if len(row) > 4 and row[4].strip() else 'Không rõ'
+                    
+                    # Use normalized key but update with display value if this is the first entry
+                    if category not in categories:
+                        categories[category] = {'amount': 0, 'display_name': display_category}
+                    categories[category]['amount'] += amount
+                    
+                    if person not in persons:
+                        persons[person] = {'amount': 0, 'display_name': display_person}
+                    persons[person]['amount'] += amount
                 except:
                     continue
             
@@ -1351,7 +1409,9 @@ class AdvancedTelegramBot:
             # Show top categories
             if categories:
                 message += "📂 **Top danh mục:**\n"
-                sorted_categories = sorted(categories.items(), key=lambda x: x[1], reverse=True)
+                # Convert to simple format for sorting (using display names and amounts)
+                category_items = [(data['display_name'], data['amount']) for data in categories.values()]
+                sorted_categories = sorted(category_items, key=lambda x: x[1], reverse=True)
                 for category, amount in sorted_categories[:3]:
                     percentage = (amount / total_amount) * 100
                     message += f"• {category}: {amount:,} VNĐ ({percentage:.1f}%)\n"
@@ -1373,7 +1433,7 @@ class AdvancedTelegramBot:
             await update.message.reply_text("❌ Có lỗi xảy ra khi lọc dữ liệu!")
     
     def apply_filter(self, row, filter_param):
-        """Apply a single filter to a row"""
+        """Apply a single filter to a row - all text comparisons are case-insensitive"""
         try:
             if filter_param.startswith('>'):
                 amount_threshold = int(filter_param[1:].replace(',', ''))
@@ -1386,13 +1446,15 @@ class AdvancedTelegramBot:
                 return row_amount < amount_threshold
             
             elif filter_param.startswith('person:'):
-                person_filter = filter_param[7:].lower()
-                row_person = row[4].lower() if len(row) > 4 else ''
+                # Use normalize_text for consistent case-insensitive comparison
+                person_filter = normalize_text(filter_param[7:])
+                row_person = normalize_text(row[4]) if len(row) > 4 else ''
                 return person_filter in row_person
             
             elif filter_param.startswith('category:'):
-                category_filter = filter_param[9:].lower()
-                row_category = row[3].lower() if len(row) > 3 else ''
+                # Use normalize_text for consistent case-insensitive comparison
+                category_filter = normalize_text(filter_param[9:])
+                row_category = normalize_text(row[3]) if len(row) > 3 else ''
                 return category_filter in row_category
             
             elif filter_param.startswith('date:'):
@@ -1401,10 +1463,10 @@ class AdvancedTelegramBot:
                 return date_filter in row_date
             
             else:
-                # Generic text search
-                search_text = filter_param.lower()
+                # Generic text search - case-insensitive using normalize_text
+                search_text = normalize_text(filter_param)
                 for field in row[:6]:
-                    if search_text in field.lower():
+                    if search_text in normalize_text(field):
                         return True
                 return False
                 
