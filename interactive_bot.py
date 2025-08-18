@@ -7,6 +7,11 @@ from google.oauth2.service_account import Credentials
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 import asyncio
+from timezone_utils import (
+    get_current_bangkok_time, get_current_bangkok_date, 
+    format_bangkok_datetime, format_bangkok_date,
+    get_bangkok_datetime_str, get_bangkok_date_str
+)
 
 # Load environment variables
 load_dotenv()
@@ -94,7 +99,7 @@ class InteractiveTelegramBot:
     def add_expense_to_sheet(self, description, amount, category, person, note=""):
         """Add expense to Google Sheets"""
         try:
-            date = datetime.now().strftime('%d/%m/%Y')
+            date = get_bangkok_date_str()
             row_data = [date, description, str(amount), category, person, note]
             self.sheet.append_row(row_data)
             return True
@@ -208,7 +213,7 @@ class InteractiveTelegramBot:
                     f"📂 **Danh mục:** {category}\n"
                     f"👤 **Người chi:** {person}\n"
                     f"📝 **Ghi chú:** {note if note else 'Không có'}\n"
-                    f"📅 **Ngày:** {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+                    f"📅 **Ngày:** {get_bangkok_datetime_str()}"
                 )
                 await update.message.reply_text(success_message, parse_mode='Markdown')
             else:
@@ -295,7 +300,7 @@ class InteractiveTelegramBot:
                 f"📂 **Danh mục:** {category}\n"
                 f"👤 **Người chi:** {person}\n"
                 f"📝 **Ghi chú:** {note if note else 'Không có'}\n"
-                f"📅 **Ngày:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                f"📅 **Ngày:** {get_bangkok_datetime_str()}\n\n"
                 f"💡 Gõ `/add` để thêm chi phí khác!"
             )
             await update.message.reply_text(success_message, parse_mode='Markdown')
@@ -324,7 +329,7 @@ class InteractiveTelegramBot:
                 f"📈 **Tổng số dòng:** {current_count}\n"
                 f"📝 **Dòng dữ liệu:** {current_count - 1} (trừ header)\n"
                 f"⏱️ **Kiểm tra mỗi:** {self.check_interval} giây\n"
-                f"🕐 **Thời gian:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+                f"🕐 **Thời gian:** {get_bangkok_datetime_str()}\n\n"
                 f"🤖 **Bot đang hoạt động bình thường!**"
             )
             await update.message.reply_text(status_message, parse_mode='Markdown')
@@ -388,7 +393,7 @@ class InteractiveTelegramBot:
                 else:
                     message += f"📝 **{headers[i]}**: {value}\n"
         
-        message += f"\n⏰ Thời gian phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        message += f"\n⏰ Thời gian phát hiện: {get_bangkok_datetime_str()}"
         return message
     
     async def run_bot(self):
@@ -407,7 +412,7 @@ class InteractiveTelegramBot:
             f"📊 Đang theo dõi Google Sheets\n"
             f"⏱️ Kiểm tra mỗi {self.check_interval} giây\n"
             f"📝 Dòng hiện tại: {self.last_row_count}\n"
-            f"🕐 Thời gian khởi động: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+            f"🕐 Thời gian khởi động: {get_bangkok_datetime_str()}"
         )
         await bot.send_message(
             chat_id=self.telegram_chat_id,

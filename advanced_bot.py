@@ -8,6 +8,13 @@ from google.oauth2.service_account import Credentials
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 import asyncio
+import csv
+import io
+from timezone_utils import (
+    get_current_bangkok_time, get_current_bangkok_date, 
+    format_bangkok_datetime, format_bangkok_date,
+    get_bangkok_datetime_str, get_bangkok_date_str
+)
 
 # Load environment variables
 load_dotenv()
@@ -82,7 +89,7 @@ class AdvancedTelegramBot:
     def get_sheet_name_for_month(self, year=None, month=None):
         """Get sheet name for a specific month"""
         if year is None or month is None:
-            now = datetime.now()
+            now = get_current_bangkok_time()
             year, month = now.year, now.month
         
         month_names = [
@@ -275,7 +282,7 @@ class AdvancedTelegramBot:
     def add_expense_to_sheet(self, description, amount, category, person, note=""):
         """Add expense to current month's sheet"""
         try:
-            date_str = datetime.now().strftime('%d/%m/%Y')
+            date_str = get_bangkok_date_str()
             row_data = [date_str, description, str(amount), category, person, note]
             
             # Check if we need a new month sheet
@@ -498,7 +505,7 @@ class AdvancedTelegramBot:
                 percentage = (amount / summary['total'] * 100) if summary['total'] > 0 else 0
                 message += f"• {person}: {amount:,} VNĐ ({percentage:.1f}%)\n"
             
-            message += f"\n📅 Cập nhật: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            message += f"\n📅 Cập nhật: {get_bangkok_datetime_str()}"
             
             await update.message.reply_text(message, parse_mode='Markdown')
             
@@ -626,7 +633,7 @@ class AdvancedTelegramBot:
                     f"📂 **Danh mục:** {category}\n"
                     f"👤 **Người chi:** {person}\n"
                     f"📝 **Ghi chú:** {note if note else 'Không có'}\n"
-                    f"📅 **Ngày:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                    f"📅 **Ngày:** {get_bangkok_datetime_str()}\n"
                     f"📊 **Sheet:** {self.current_sheet.title}"
                 )
                 
@@ -720,7 +727,7 @@ class AdvancedTelegramBot:
                 f"📂 **Danh mục:** {category}\n"
                 f"👤 **Người chi:** {person}\n"
                 f"📝 **Ghi chú:** {note if note else 'Không có'}\n"
-                f"📅 **Ngày:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                f"📅 **Ngày:** {get_bangkok_datetime_str()}\n"
                 f"📊 **Sheet:** {self.current_sheet.title}\n\n"
                 f"💡 Gõ `/add` để thêm chi phí khác hoặc `/summary` để xem tổng kết!"
             )
@@ -761,7 +768,7 @@ class AdvancedTelegramBot:
                 f"💰 **Tổng chi tháng này:** {summary['total']:,} VNĐ\n"
                 f"📝 **Số giao dịch:** {summary['count']} lần\n"
                 f"⏱️ **Kiểm tra mỗi:** {self.check_interval} giây\n"
-                f"🕐 **Thời gian:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+                f"🕐 **Thời gian:** {get_bangkok_datetime_str()}\n\n"
                 f"🤖 **Bot đang hoạt động bình thường!**"
             )
             await update.message.reply_text(status_message, parse_mode='Markdown')
@@ -884,12 +891,12 @@ class AdvancedTelegramBot:
     async def today_command(self, update: Update, context):
         """Handle /today command - show today's expenses"""
         try:
-            today = date.today()
+            today = get_current_bangkok_date()
             rows = self.get_expenses_by_date_range(today, today)
             summary = self.calculate_summary_from_rows(rows)
             
             message = (
-                f"📅 **CHI TIÊU HÔM NAY ({today.strftime('%d/%m/%Y')})**\n\n"
+                f"📅 **CHI TIÊU HÔM NAY ({format_bangkok_date(today)})**\n\n"
                 f"💰 **Tổng chi tiêu:** {summary['total']:,} VNĐ\n"
                 f"📝 **Số giao dịch:** {summary['count']} lần\n"
             )
@@ -922,7 +929,7 @@ class AdvancedTelegramBot:
     async def week_command(self, update: Update, context):
         """Handle /week command - show this week's expenses"""
         try:
-            today = date.today()
+            today = get_current_bangkok_date()
             # Get start of week (Monday)
             start_of_week = today - timedelta(days=today.weekday())
             end_of_week = start_of_week + timedelta(days=6)
@@ -976,9 +983,10 @@ class AdvancedTelegramBot:
         """Handle /daily command - show daily breakdown for current month"""
         try:
             # Get current month data
+            today = get_current_bangkok_date()
             all_rows = self.get_expenses_by_date_range(
-                date.today().replace(day=1),  # First day of month
-                date.today()  # Today
+                today.replace(day=1),  # First day of month
+                today  # Today
             )
             
             if not all_rows:
@@ -1482,7 +1490,7 @@ class AdvancedTelegramBot:
                 return
             
             # Get data from previous month for comparison
-            current_month = datetime.now()
+            current_month = get_current_bangkok_time()
             if current_month.month == 1:
                 prev_month = current_month.replace(year=current_month.year-1, month=12)
             else:
@@ -1499,7 +1507,7 @@ class AdvancedTelegramBot:
             message = f"🧠 **PHÂN TÍCH THÔNG MINH - {summary['sheet_name'].upper()}**\n\n"
             
             # Basic insights
-            avg_per_day = summary['total'] / datetime.now().day
+            avg_per_day = summary['total'] / get_current_bangkok_time().day
             message += f"📊 **Thống kê cơ bản:**\n"
             message += f"• Trung bình/ngày: {avg_per_day:,.0f} VNĐ\n"
             message += f"• Dự đoán cuối tháng: {avg_per_day * 30:,.0f} VNĐ\n\n"
@@ -1576,7 +1584,7 @@ class AdvancedTelegramBot:
             if budget_status:
                 message += "💰 **Phân tích ngân sách:**\n"
                 
-                days_left = 30 - datetime.now().day
+                days_left = 30 - get_current_bangkok_time().day
                 if days_left > 0 and budget_status['remaining'] > 0:
                     daily_budget_left = budget_status['remaining'] / days_left
                     message += f"• Có thể chi: {daily_budget_left:,.0f} VNĐ/ngày ({days_left} ngày còn lại)\n"
@@ -1608,7 +1616,7 @@ class AdvancedTelegramBot:
                     message += f"• Chỉ {summary['count']} giao dịch - ít giao dịch lớn\n"
             
             # Weekly pattern analysis
-            today = date.today()
+            today = get_current_bangkok_date()
             start_of_month = today.replace(day=1)
             week_data = self.get_expenses_by_date_range(start_of_month, today)
             
@@ -1748,7 +1756,7 @@ class AdvancedTelegramBot:
             # Create backup data structure
             backup_data = {
                 'sheet_name': self.current_sheet.title,
-                'backup_date': datetime.now().isoformat(),
+                'backup_date': get_current_bangkok_time().isoformat(),
                 'summary': summary,
                 'raw_data': all_data,
                 'total_rows': len(all_data),
@@ -1756,7 +1764,7 @@ class AdvancedTelegramBot:
             }
             
             # Save to file
-            backup_filename = f"backup_{self.current_sheet.title.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            backup_filename = f"backup_{self.current_sheet.title.replace(' ', '_')}_{format_bangkok_datetime(format_str='%Y%m%d_%H%M%S')}.json"
             
             with open(backup_filename, 'w', encoding='utf-8') as f:
                 json.dump(backup_data, f, ensure_ascii=False, indent=2)
@@ -1767,7 +1775,7 @@ class AdvancedTelegramBot:
                 f"📁 **File:** `{backup_filename}`\n"
                 f"📝 **Dữ liệu:** {len(all_data)-1} giao dịch\n"
                 f"💰 **Tổng tiền:** {summary['total']:,} VNĐ\n"
-                f"🕐 **Thời gian:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+                f"🕐 **Thời gian:** {get_bangkok_datetime_str()}\n\n"
                 f"✅ **Backup đã được lưu trong thư mục bot**"
             )
             
@@ -2005,7 +2013,7 @@ class AdvancedTelegramBot:
                 else:
                     message += f"📝 **{headers[i]}**: {value}\n"
         
-        message += f"\n⏰ Thời gian phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        message += f"\n⏰ Thời gian phát hiện: {get_bangkok_datetime_str()}"
         return message
     
     async def run_bot(self):
@@ -2024,7 +2032,7 @@ class AdvancedTelegramBot:
             f"📊 **Sheet hiện tại:** {self.current_sheet.title}\n"
             f"⏱️ Kiểm tra mỗi {self.check_interval} giây\n"
             f"📝 Dòng hiện tại: {self.last_row_count}\n"
-            f"🕐 Thời gian khởi động: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+            f"🕐 Thời gian khởi động: {get_bangkok_datetime_str()}\n\n"
             f"✨ **Tính năng mới:** Tự động tạo sheet theo tháng & tính tổng!"
         )
         await bot.send_message(
