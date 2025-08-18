@@ -4,3 +4,5 @@ credentials.json
 __pycache__/
 *.pyc
 *.pyo
+test_new_functionality.py
+test_integration.py
