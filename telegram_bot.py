@@ -8,6 +8,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 from telegram import Bot
 import asyncio
+from timezone_utils import (
+    get_current_bangkok_time, get_current_bangkok_date, 
+    format_bangkok_datetime, format_bangkok_date,
+    get_bangkok_datetime_str, get_bangkok_date_str
+)
 
 # Load environment variables
 load_dotenv()
@@ -122,7 +127,7 @@ class GoogleSheetsMonitor:
                 else:
                     message += f"📝 **{headers[i]}**: {value}\n"
         
-        message += f"\n⏰ Thời gian phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        message += f"\n⏰ Thời gian phát hiện: {get_bangkok_datetime_str()}"
         return message
     
     async def send_telegram_message(self, message):
@@ -176,7 +181,7 @@ class GoogleSheetsMonitor:
             f"📊 Đang theo dõi Google Sheets\n"
             f"⏱️ Kiểm tra mỗi {self.check_interval} giây\n"
             f"📝 Dòng hiện tại: {self.last_row_count}\n"
-            f"🕐 Thời gian khởi động: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+            f"🕐 Thời gian khởi động: {get_bangkok_datetime_str()}"
         )
         await self.send_telegram_message(startup_message)
         
