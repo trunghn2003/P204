@@ -385,6 +385,146 @@ class AdvancedTelegramBot:
             logger.error(f"Error getting monthly summary: {e}")
             return None
     
+    async def export_command(self, update: Update, context):
+        """Handle /export command - export current month's sheet as CSV"""
+        try:
+            # Get current month data
+            summary = self.get_monthly_summary()
+            if not summary or summary['total'] == 0:
+                await update.message.reply_text("❌ Chưa có dữ liệu để xuất!")
+                return
+            
+            # Get all data from current sheet
+            all_data = self.current_sheet.get_all_values()
+            
+            if not all_data:
+                await update.message.reply_text("❌ Sheet không có dữ liệu!")
+                return
+            
+            # Create CSV content
+            csv_content = io.StringIO()
+            csv_writer = csv.writer(csv_content)
+            
+            # Write headers and data
+            for row in all_data:
+                csv_writer.writerow(row)
+            
+            # Convert to bytes for sending
+            csv_bytes = csv_content.getvalue().encode('utf-8-sig')  # BOM for Excel compatibility
+            csv_file = io.BytesIO(csv_bytes)
+            csv_file.name = f"chi_tieu_{self.current_sheet.title.replace(' ', '_')}_{format_bangkok_datetime(format_str='%Y%m%d')}.csv"
+            
+            # Send file
+            await update.message.reply_document(
+                document=csv_file,
+                caption=f"📄 **Xuất dữ liệu thành công!**\n\n"
+                        f"📊 **Sheet:** {self.current_sheet.title}\n"
+                        f"📝 **Tổng giao dịch:** {summary['count']} lần\n"
+                        f"💰 **Tổng chi tiêu:** {summary['total']:,} VNĐ\n"
+                        f"📅 **Xuất lúc:** {get_bangkok_datetime_str()}",
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in export command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi xuất dữ liệu!")
+    
+    async def topspenders_command(self, update: Update, context):
+        """Handle /topspenders command - show top spenders for current month"""
+        try:
+            summary = self.get_monthly_summary()
+            if not summary or summary['total'] == 0:
+                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu tháng này!")
+                return
+            
+            if not summary['by_person']:
+                await update.message.reply_text("❌ Chưa có thông tin người chi tiêu!")
+                return
+            
+            # Sort by spending amount (descending)
+            sorted_spenders = sorted(summary['by_person'].items(), key=lambda x: x[1], reverse=True)
+            
+            message = f"👑 **TOP NGƯỜI CHI TIÊU - {summary['sheet_name'].upper()}**\n\n"
+            message += f"💰 **Tổng chi tiêu tháng:** {summary['total']:,} VNĐ\n\n"
+            
+            for i, (person, amount) in enumerate(sorted_spenders[:10], 1):
+                percentage = (amount / summary['total'] * 100) if summary['total'] > 0 else 0
+                
+                # Add medals for top 3
+                if i == 1:
+                    emoji = "🥇"
+                elif i == 2:
+                    emoji = "🥈"
+                elif i == 3:
+                    emoji = "🥉"
+                else:
+                    emoji = f"{i}."
+                
+                message += f"{emoji} **{person}**\n"
+                message += f"   💸 {amount:,} VNĐ ({percentage:.1f}%)\n\n"
+            
+            if len(sorted_spenders) > 10:
+                message += f"📋 *Hiển thị top 10/{len(sorted_spenders)} người chi tiêu*\n\n"
+            
+            message += f"📅 Cập nhật: {get_bangkok_datetime_str()}"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in topspenders command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy thống kê người chi tiêu!")
+    
+    async def topcategories_command(self, update: Update, context):
+        """Handle /topcategories command - show top spending categories for current month"""
+        try:
+            summary = self.get_monthly_summary()
+            if not summary or summary['total'] == 0:
+                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu tháng này!")
+                return
+            
+            if not summary['by_category']:
+                await update.message.reply_text("❌ Chưa có thông tin danh mục chi tiêu!")
+                return
+            
+            # Sort by spending amount (descending)
+            sorted_categories = sorted(summary['by_category'].items(), key=lambda x: x[1], reverse=True)
+            
+            message = f"📊 **TOP DANH MỤC CHI TIÊU - {summary['sheet_name'].upper()}**\n\n"
+            message += f"💰 **Tổng chi tiêu tháng:** {summary['total']:,} VNĐ\n\n"
+            
+            for i, (category, amount) in enumerate(sorted_categories[:10], 1):
+                percentage = (amount / summary['total'] * 100) if summary['total'] > 0 else 0
+                
+                # Add medals for top 3
+                if i == 1:
+                    emoji = "🥇"
+                elif i == 2:
+                    emoji = "🥈"
+                elif i == 3:
+                    emoji = "🥉"
+                else:
+                    emoji = f"{i}."
+                
+                message += f"{emoji} **{category}**\n"
+                message += f"   💸 {amount:,} VNĐ ({percentage:.1f}%)\n\n"
+            
+            if len(sorted_categories) > 10:
+                message += f"📋 *Hiển thị top 10/{len(sorted_categories)} danh mục*\n\n"
+            
+            # Add insights for top categories
+            if len(sorted_categories) >= 3:
+                top_3_total = sum(item[1] for item in sorted_categories[:3])
+                top_3_percentage = (top_3_total / summary['total'] * 100) if summary['total'] > 0 else 0
+                message += f"💡 **Nhận xét:** Top 3 danh mục chiếm {top_3_percentage:.1f}% tổng chi tiêu\n\n"
+            
+            message += f"📅 Cập nhật: {get_bangkok_datetime_str()}"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in topcategories command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy thống kê danh mục!")
+    
     def setup_handlers(self):
         """Setup command and message handlers"""
         # Conversation handler for adding expenses
@@ -435,6 +575,9 @@ class AdvancedTelegramBot:
         self.application.add_handler(CommandHandler('edit', self.edit_command))
         self.application.add_handler(CommandHandler('delete', self.delete_command))
         self.application.add_handler(CommandHandler('backup', self.backup_command))
+        self.application.add_handler(CommandHandler('export', self.export_command))
+        self.application.add_handler(CommandHandler('topspenders', self.topspenders_command))
+        self.application.add_handler(CommandHandler('topcategories', self.topcategories_command))
         self.application.add_handler(conv_handler)
         self.application.add_handler(budget_handler)
         self.application.add_handler(search_handler)
@@ -552,7 +695,9 @@ class AdvancedTelegramBot:
             "   `/today` - Chi tiêu hôm nay\n"
             "   `/week` - Chi tiêu tuần này\n"
             "   `/daily` - Chi tiêu theo từng ngày\n"
-            "   `/month` - Danh sách tất cả các tháng\n\n"
+            "   `/month` - Danh sách tất cả các tháng\n"
+            "   `/topspenders` - Top người chi tiêu nhiều nhất\n"
+            "   `/topcategories` - Top danh mục chi tiêu\n\n"
             "🔹 **Quản lý ngân sách:**\n"
             "   `/budget` - Xem trạng thái ngân sách\n"
             "   `/budget 5000000` - Đặt ngân sách 5 triệu\n\n"
@@ -569,6 +714,7 @@ class AdvancedTelegramBot:
             "   `/delete` - Xóa giao dịch gần nhất\n\n"
             "🔹 **Quản lý hệ thống:**\n"
             "   `/backup` - Sao lưu dữ liệu\n"
+            "   `/export` - Xuất dữ liệu CSV\n"
             "   `/status` - Trạng thái bot\n"
             "   `/reset` - Reset vị trí theo dõi\n"
             "   `/cancel` - Hủy thao tác hiện tại\n\n"
