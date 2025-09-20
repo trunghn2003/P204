@@ -78,7 +78,8 @@ class AdvancedTelegramBot:
                 scopes=scope
             )
             
-            self.gc = gspread.authorize(creds)
+            # Use the new method to avoid deprecation warning
+            self.gc = gspread.Client(auth=creds)
             self.workbook = self.gc.open_by_key(self.sheets_id)
             logger.info("Google Sheets connection established successfully")
             
@@ -113,11 +114,11 @@ class AdvancedTelegramBot:
             sheet = self.workbook.add_worksheet(title=sheet_name, rows=1000, cols=10)
             
             # Setup headers
-            headers = ['Ngày', 'Mô tả', 'Số tiền', 'Danh mục', 'Người chi', 'Ghi chú']
+            headers = ['Ngày', 'Mô tả', 'Số tiền', 'Danh mục', 'Người chi', 'Ghi chú', "Loại"]
             sheet.insert_row(headers, 1)
             
             # Format header
-            sheet.format('A1:F1', {
+            sheet.format('A1:G1', {
                 "backgroundColor": {
                     "red": 0.2,
                     "green": 0.4,
@@ -572,6 +573,7 @@ class AdvancedTelegramBot:
         self.application.add_handler(CommandHandler('compare', self.compare_command))
         self.application.add_handler(CommandHandler('filter', self.filter_command))
         self.application.add_handler(CommandHandler('insight', self.insight_command))
+        self.application.add_handler(CommandHandler('split', self.split_command))
         self.application.add_handler(CommandHandler('edit', self.edit_command))
         self.application.add_handler(CommandHandler('delete', self.delete_command))
         self.application.add_handler(CommandHandler('backup', self.backup_command))
@@ -2042,7 +2044,7 @@ class AdvancedTelegramBot:
             logger.error(f"Error handling edit/delete response: {e}")
             await update.message.reply_text("❌ Có lỗi xảy ra!")
     
-    async def check_for_new_rows(self):
+    async def check_for_new_rows(self, context=None):
         """Check for new rows and send notifications"""
         try:
             # Check if we need to switch to new month
@@ -2166,10 +2168,6 @@ class AdvancedTelegramBot:
         """Run the advanced bot"""
         logger.info("Starting Advanced Telegram Bot...")
         
-        # Start the bot
-        await self.application.initialize()
-        await self.application.start()
-        
         # Send startup message
         bot = Bot(token=self.telegram_bot_token)
         startup_message = (
@@ -2187,25 +2185,152 @@ class AdvancedTelegramBot:
             parse_mode='Markdown'
         )
         
-        # Start polling for updates
-        await self.application.updater.start_polling()
+        # Add monitoring job to application
+        self.application.job_queue.run_repeating(
+            self.check_for_new_rows,
+            interval=self.check_interval,
+            first=1
+        )
         
-        # Background task to check for new rows
-        while True:
-            try:
-                await self.check_for_new_rows()
-                await asyncio.sleep(self.check_interval)
-            except Exception as e:
-                logger.error(f"Error in monitoring loop: {e}")
-                await asyncio.sleep(self.check_interval)
+        # Start polling for updates
+        await self.application.run_polling(drop_pending_updates=True)
+
+    async def split_command(self, update: Update, context):
+        """Handle /split command - calculate money split between user groups"""
+        try:
+            # Get current month summary
+            summary = self.get_monthly_summary()
+            if not summary or summary['total'] == 0:
+                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu tháng này để chia!")
+                return
+            
+            # Define user groups as per user's specification
+            user_groups = {
+                1: ["3 người dùng"],  # Group with 3 people
+                2: ["Trung", "Tài"],
+                3: ["Trung", "Nhật"], 
+                4: ["Nhật", "Tài"]
+            }
+            
+            # Calculate expenses by person
+            person_expenses = {}
+            all_data = self.current_sheet.get_all_values()[1:]  # Skip header
+            
+            for row in all_data:
+                if len(row) >= 5 and row[4].strip():  # Has person name
+                    person = row[4].strip()
+                    try:
+                        amount = int(row[2].replace(',', ''))
+                        if person not in person_expenses:
+                            person_expenses[person] = 0
+                        person_expenses[person] += amount
+                    except:
+                        continue
+            
+            # Calculate splits for each group
+            group_calculations = {}
+            total_expenses = summary['total']
+            
+            for group_id, members in user_groups.items():
+                if group_id == 1:  # Special case for "3 người dùng"
+                    # Assume this means split equally among 3 people
+                    amount_per_person = total_expenses / 3
+                    group_calculations[group_id] = {
+                        'members': ["Người 1", "Người 2", "Người 3"],
+                        'total': total_expenses,
+                        'per_person': amount_per_person,
+                        'member_count': 3
+                    }
+                else:
+                    # Calculate for specific named groups
+                    member_count = len(members)
+                    amount_per_person = total_expenses / member_count
+                    group_calculations[group_id] = {
+                        'members': members,
+                        'total': total_expenses,
+                        'per_person': amount_per_person,
+                        'member_count': member_count
+                    }
+            
+            # Format response message
+            message = f"💰 **TÍNH TOÁN CHIA TIỀN - {summary['sheet_name'].upper()}**\n\n"
+            message += f"📊 **Tổng chi tiêu tháng:** {total_expenses:,} VNĐ\n\n"
+            
+            # Show individual expenses first
+            if person_expenses:
+                message += "👤 **Chi tiêu thực tế từng người:**\n"
+                for person, amount in sorted(person_expenses.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (amount / total_expenses * 100) if total_expenses > 0 else 0
+                    message += f"• {person}: {amount:,} VNĐ ({percentage:.1f}%)\n"
+                message += "\n"
+            
+            # Show group calculations
+            message += "🔢 **TÍNH TOÁN CHIA THEO NHÓM:**\n\n"
+            
+            for group_id, calc in group_calculations.items():
+                if group_id == 1:
+                    message += f"**Nhóm {group_id}: {calc['member_count']} người dùng**\n"
+                else:
+                    message += f"**Nhóm {group_id}: {' + '.join(calc['members'])}**\n"
+                
+                message += f"💸 Mỗi người phải trả: **{calc['per_person']:,.0f} VNĐ**\n"
+                message += f"👥 Số thành viên: {calc['member_count']}\n"
+                
+                # Show what each person should pay vs what they actually spent
+                if group_id != 1 and person_expenses:
+                    for member in calc['members']:
+                        actual_spent = 0
+                        # Find actual spending for this member (case-insensitive)
+                        for person, amount in person_expenses.items():
+                            if normalize_text(person) == normalize_text(member):
+                                actual_spent = amount
+                                break
+                        
+                        balance = calc['per_person'] - actual_spent
+                        if balance > 0:
+                            message += f"  → {member}: cần trả thêm {balance:,.0f} VNĐ\n"
+                        elif balance < 0:
+                            message += f"  → {member}: được nhận lại {abs(balance):,.0f} VNĐ\n"
+                        else:
+                            message += f"  → {member}: đã cân bằng ✅\n"
+                
+                message += "\n"
+            
+            # Add summary tips
+            message += "💡 **Ghi chú:**\n"
+            message += "• Nhóm 1: Chia đều cho 3 người bất kỳ\n"
+            message += "• Nhóm 2-4: Chia theo cặp đôi cụ thể\n"
+            message += "• Số tiền dương = cần trả thêm\n"
+            message += "• Số tiền âm = được nhận lại\n\n"
+            message += f"📅 Tính toán vào: {get_bangkok_datetime_str()}"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in split command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi tính toán chia tiền!")
 
 async def main():
     """Main function"""
     try:
         bot = AdvancedTelegramBot()
         await bot.run_bot()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (Ctrl+C)")
     except Exception as e:
         logger.error(f"Error in main: {e}")
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Run the bot directly in the event loop
+    bot = AdvancedTelegramBot()
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(bot.run_bot())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
