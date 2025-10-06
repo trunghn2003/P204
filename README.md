@@ -55,8 +55,33 @@ Bot này sẽ theo dõi Google Sheets và gửi thông báo qua Telegram khi có
 ## Chạy bot
 
 ```bash
+# Bot cơ bản - chỉ theo dõi và thông báo
 python telegram_bot.py
+
+# Bot nâng cao - đầy đủ tính năng (khuyến nghị)
+python advanced_bot.py
 ```
+
+## Lệnh bot nâng cao
+
+### 💰 Tính toán chia tiền
+```
+/split
+```
+Tự động tính toán số tiền mỗi người cần trả dựa trên cột "Loại":
+- **Loại 1**: 3 người cùng dùng (chia đều)
+- **Loại 2**: Trung + Tài dùng (chia đôi)  
+- **Loại 3**: Trung + Nhật dùng (chia đôi)
+- **Loại 4**: Nhật + Tài dùng (chia đôi)
+
+### 📊 Các lệnh khác
+- `/add` - Thêm chi phí tương tác
+- `/quick Mô tả|Số tiền|Danh mục|Người chi|Ghi chú` - Thêm nhanh
+- `/summary` - Tổng kết tháng
+- `/budget [số tiền]` - Quản lý ngân sách
+- `/search [từ khóa]` - Tìm kiếm giao dịch
+- `/export` - Xuất dữ liệu CSV
+- `/help` - Xem đầy đủ các lệnh
 
 ## Tính năng
 
@@ -66,6 +91,10 @@ python telegram_bot.py
 - ✅ Xử lý số tiền với định dạng VNĐ
 - ✅ Lưu trạng thái để tránh gửi trùng lặp
 - ✅ Logging để debug
+- ✅ **Tính toán chia tiền thông minh** - Tự động tính toán số tiền mỗi người cần trả dựa trên cột "Loại"
+- ✅ **Quản lý ngân sách** - Đặt ngân sách và nhận cảnh báo khi sắp hết
+- ✅ **Phân tích thống kê** - Báo cáo chi tiết theo danh mục, người chi, thời gian
+- ✅ **Tự động tạo sheet theo tháng** - Bot tự động tạo sheet mới cho mỗi tháng
 
 ## Troubleshooting
 

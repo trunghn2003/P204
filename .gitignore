@@ -6,3 +6,4 @@ __pycache__/
 *.pyo
 test_new_functionality.py
 test_integration.py
+myenv/
