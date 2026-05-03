@@ -2076,7 +2076,8 @@ class AdvancedTelegramBot:
                 
                 # Send notification for each new row
                 for i, row in enumerate(new_rows):
-                    if any(cell.strip() for cell in row):  # Only process non-empty rows
+                    # Check if row is not empty (specifically check description and amount)
+                    if len(row) >= 3 and row[1].strip() and row[2].strip():
                         row_number = self.last_row_count + i + 1
                         message = self.format_row_message(row, row_number)
                         
@@ -2206,18 +2207,17 @@ class AdvancedTelegramBot:
             
             # Define user groups based on 'Loại' column
             user_groups = {
-                1: ["Nhật", "Trung", "Tài"],  # 3 người cùng dùng
-                2: ["Trung", "Tài"],          # Trung + Tài dùng
-                3: ["Trung", "Nhật"],         # Trung + Nhật dùng
-                4: ["Nhật", "Tài"]            # Nhật + Tài dùng
+                "Cả hai": ["Trung", "Chung"],
+                "Trung": ["Trung"],
+                "Chung": ["Chung"]
             }
             
             # Get all data from sheet
             all_data = sheet.get_all_values()[1:]  # Skip header
             
             # Categorize expenses by 'Loại' (column G - index 6)
-            expenses_by_type = {1: [], 2: [], 3: [], 4: []}
-            person_total_paid = {"Nhật": 0, "Trung": 0, "Tài": 0}
+            expenses_by_type = {"Cả hai": [], "Trung": [], "Chung": []}
+            person_total_paid = {"Trung": 0, "Chung": 0}
             
             processed_rows = 0
             for row in all_data:
@@ -2227,64 +2227,53 @@ class AdvancedTelegramBot:
                         person_paid_raw = row[4].strip() if len(row) > 4 else ""
                         expense_type = row[6].strip() if len(row) > 6 else ""
                         
-                        logger.debug(f"Processing row: amount={amount}, person_raw='{person_paid_raw}', type='{expense_type}'")
-                        
-                        # Normalize person name (trim and case-insensitive matching)  
+                        # Normalize person name
                         person_paid_normalized = person_paid_raw.strip().lower()
                         actual_person = None
+                        if "trung" in person_paid_normalized: actual_person = "Trung"
+                        elif "chung" in person_paid_normalized: actual_person = "Chung"
                         
-                        # Map normalized names to standard names
-                        if "trung" in person_paid_normalized:
-                            actual_person = "Trung"
-                        elif "nhật" in person_paid_normalized or "nhat" in person_paid_normalized:
-                            actual_person = "Nhật"
-                        elif "tài" in person_paid_normalized or "tai" in person_paid_normalized:
-                            actual_person = "Tài"
-                        
-                        logger.debug(f"Name mapping: '{person_paid_raw}' -> '{actual_person}'")
-                        
-                        # Track who actually paid (only if recognized)
+                        # Track who actually paid
                         if actual_person:
                             person_total_paid[actual_person] += amount
                             processed_rows += 1
-                        else:
-                            logger.warning(f"Unrecognized person name: '{person_paid_raw}' (normalized: '{person_paid_normalized}')")
                         
                         # Categorize by type
-                        if expense_type and expense_type.isdigit():
-                            type_num = int(expense_type)
-                            if type_num in expenses_by_type:
-                                expenses_by_type[type_num].append({
-                                    'amount': amount,
-                                    'description': row[1] if len(row) > 1 else "",
-                                    'date': row[0] if len(row) > 0 else "",
-                                    'paid_by': actual_person if actual_person else person_paid_raw
-                                })
+                        expense_type_normalized = expense_type.strip()
+                        # Backward compatibility
+                        if expense_type_normalized == "1": expense_type_normalized = "Cả hai"
+                        elif expense_type_normalized == "2": expense_type_normalized = "Trung"
+                        elif expense_type_normalized == "3": expense_type_normalized = "Chung"
+                        
+                        if expense_type_normalized in expenses_by_type:
+                            expenses_by_type[expense_type_normalized].append({
+                                'amount': amount,
+                                'description': row[1] if len(row) > 1 else "",
+                                'date': row[0] if len(row) > 0 else "",
+                                'paid_by': actual_person if actual_person else person_paid_raw
+                            })
                     except (ValueError, IndexError):
                         continue
             
             # Calculate total amount for each type
             type_totals = {}
-            for type_num, expenses in expenses_by_type.items():
-                type_totals[type_num] = sum(exp['amount'] for exp in expenses)
+            for type_name, expenses in expenses_by_type.items():
+                type_totals[type_name] = sum(exp['amount'] for exp in expenses)
             
-            # Calculate what each person should pay for each type
-            person_should_pay = {"Nhật": 0, "Trung": 0, "Tài": 0}
-            
-            for type_num, total_amount in type_totals.items():
+            # Calculate what each person should pay
+            person_should_pay = {"Trung": 0, "Chung": 0}
+            for type_name, total_amount in type_totals.items():
                 if total_amount > 0:
-                    members = user_groups[type_num]
+                    members = user_groups[type_name]
                     amount_per_person = total_amount / len(members)
-                    
                     for member in members:
                         person_should_pay[member] += amount_per_person
             
-            # Calculate balance (what each person should pay - what they actually paid)
+            # Calculate balance
             balances = {}
-            for person in ["Nhật", "Trung", "Tài"]:
+            for person in ["Trung", "Chung"]:
                 balances[person] = person_should_pay[person] - person_total_paid[person]
             
-            # Return calculation results
             return {
                 'sheet_name': sheet_name,
                 'summary': summary,
@@ -2298,314 +2287,107 @@ class AdvancedTelegramBot:
             
         except Exception as e:
             logger.error(f"Error calculating money split: {e}", exc_info=True)
-            return None, f"❌ Có lỗi xảy ra khi tính toán: {e}"
+            return None, f"❌ Lỗi tính toán: {e}"
 
-    async def split_command(self, update: Update, context):
-        """Handle /split command - calculate money split based on 'Loại' column"""
-        try:
-            # Get current month summary
-            summary = self.get_monthly_summary()
-            if not summary or summary['total'] == 0:
-                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu tháng này để chia!")
-                return
-            
-            # Define user groups based on 'Loại' column
-            user_groups = {
-                1: ["Nhật", "Trung", "Tài"],  # 3 người cùng dùng
-                2: ["Trung", "Tài"],          # Trung + Tài dùng
-                3: ["Trung", "Nhật"],         # Trung + Nhật dùng
-                4: ["Nhật", "Tài"]            # Nhật + Tài dùng
-            }
-            
-            # Get all data from current sheet
-            all_data = self.current_sheet.get_all_values()[1:]  # Skip header
-            
-            # Categorize expenses by 'Loại' (column G - index 6)
-            expenses_by_type = {1: [], 2: [], 3: [], 4: []}
-            person_total_paid = {"Nhật": 0, "Trung": 0, "Tài": 0}
-            
-            for row in all_data:
-                if len(row) >= 7 and row[2].strip():  # Has amount and type
-                    try:
-                        amount = int(row[2].replace(',', ''))
-                        person_paid_raw = row[4].strip() if len(row) > 4 else ""
-                        expense_type = row[6].strip() if len(row) > 6 else ""
-                        
-                        # Normalize person name (trim and case-insensitive matching)
-                        person_paid_normalized = person_paid_raw.strip().lower()
-                        actual_person = None
-                        
-                        # Map normalized names to standard names
-                        if "trung" in person_paid_normalized:
-                            actual_person = "Trung"
-                        elif "nhật" in person_paid_normalized or "nhat" in person_paid_normalized:
-                            actual_person = "Nhật"
-                        elif "tài" in person_paid_normalized or "tai" in person_paid_normalized:
-                            actual_person = "Tài"
-                        
-                        # Track who actually paid (only if recognized)
-                        if actual_person:
-                            person_total_paid[actual_person] += amount
-                        
-                        # Categorize by type
-                        if expense_type and expense_type.isdigit():
-                            type_num = int(expense_type)
-                            if type_num in expenses_by_type:
-                                expenses_by_type[type_num].append({
-                                    'amount': amount,
-                                    'description': row[1] if len(row) > 1 else "",
-                                    'date': row[0] if len(row) > 0 else "",
-                                    'paid_by': actual_person if actual_person else person_paid_raw
-                                })
-                    except (ValueError, IndexError):
-                        continue
-            
-            # Calculate total amount for each type
-            type_totals = {}
-            for type_num, expenses in expenses_by_type.items():
-                type_totals[type_num] = sum(exp['amount'] for exp in expenses)
-            
-            # Calculate what each person should pay for each type
-            person_should_pay = {"Nhật": 0, "Trung": 0, "Tài": 0}
-            
-            for type_num, total_amount in type_totals.items():
-                if total_amount > 0:
-                    members = user_groups[type_num]
-                    amount_per_person = total_amount / len(members)
-                    
-                    for member in members:
-                        person_should_pay[member] += amount_per_person
-            
-            # Calculate balance (what each person should pay - what they actually paid)
-            balances = {}
-            for person in ["Nhật", "Trung", "Tài"]:
-                balances[person] = person_should_pay[person] - person_total_paid[person]
-            
-            # Format response message
-            message = f"💰 **TÍNH TOÁN CHIA TIỀN THEO LOẠI - {summary['sheet_name'].upper()}**\n\n"
-            message += f"📊 **Tổng chi tiêu tháng:** {summary['total']:,} VNĐ\n\n"
-            
-            # Show breakdown by type
-            message += "📋 **CHI TIẾT THEO LOẠI:**\n"
-            for type_num in [1, 2, 3, 4]:
-                if type_totals[type_num] > 0:
-                    members = user_groups[type_num]
-                    amount_per_person = type_totals[type_num] / len(members)
-                    
-                    message += f"\n� **Loại {type_num}** ({' + '.join(members)}):\n"
-                    message += f"   💰 Tổng: {type_totals[type_num]:,} VNĐ\n"
-                    message += f"   👤 Mỗi người: {amount_per_person:,.0f} VNĐ\n"
-                    message += f"   📊 Số giao dịch: {len(expenses_by_type[type_num])}\n"
-            
-            message += f"\n👤 **TÌNH HÌNH THỰC TẾ:**\n"
-            for person in ["Nhật", "Trung", "Tài"]:
-                paid = person_total_paid[person]
-                should_pay = person_should_pay[person]
-                percentage = (paid / summary['total'] * 100) if summary['total'] > 0 else 0
-                message += f"• **{person}**: Đã trả {paid:,} VNĐ ({percentage:.1f}%)\n"
-                message += f"  └ Cần trả: {should_pay:,.0f} VNĐ\n"
-            
-            message += f"\n💸 **KẾT QUẢ CUỐI CÙNG:**\n"
-            
-            # Find who owes money and who should receive money
-            debtors = []  # People who owe money
-            creditors = []  # People who should receive money
-            
-            for person, balance in balances.items():
-                if balance > 1000:  # Owe money (threshold 1000 VND to avoid small amounts)
-                    debtors.append((person, balance))
-                    message += f"🔴 **{person}**: Cần trả thêm {balance:,.0f} VNĐ\n"
-                elif balance < -1000:  # Should receive money
-                    creditors.append((person, abs(balance)))
-                    message += f"🟢 **{person}**: Được nhận lại {abs(balance):,.0f} VNĐ\n"
-                else:
-                    message += f"⚪ **{person}**: Đã cân bằng ✅\n"
-            
-            # Show payment suggestions
-            if debtors and creditors:
-                message += f"\n� **GỢI Ý THANH TOÁN:**\n"
-                
-                # Simple debt settlement algorithm
-                debtors_copy = debtors.copy()
-                creditors_copy = creditors.copy()
-                
-                transaction_count = 0
-                while debtors_copy and creditors_copy and transaction_count < 10:
-                    debtor_name, debt_amount = debtors_copy[0]
-                    creditor_name, credit_amount = creditors_copy[0]
-                    
-                    transfer_amount = min(debt_amount, credit_amount)
-                    
-                    message += f"💳 **{debtor_name}** → **{creditor_name}**: {transfer_amount:,.0f} VNĐ\n"
-                    
-                    # Update amounts
-                    new_debt = debt_amount - transfer_amount
-                    new_credit = credit_amount - transfer_amount
-                    
-                    if new_debt <= 1000:
-                        debtors_copy.pop(0)
-                    else:
-                        debtors_copy[0] = (debtor_name, new_debt)
-                    
-                    if new_credit <= 1000:
-                        creditors_copy.pop(0)
-                    else:
-                        creditors_copy[0] = (creditor_name, new_credit)
-                    
-                    transaction_count += 1
-            
-            message += f"\n� **CHÚ THÍCH:**\n"
-            message += f"• Loại 1: 3 người cùng dùng (chia đều 3)\n"
-            message += f"• Loại 2: Trung + Tài dùng (chia đôi)\n"
-            message += f"• Loại 3: Trung + Nhật dùng (chia đôi)\n"
-            message += f"• Loại 4: Nhật + Tài dùng (chia đôi)\n\n"
-            message += f"� **Lưu ý:** Bot tự động nhận diện tên (không phân biệt hoa/thường)\n"
-            message += f"�📅 Tính toán vào: {get_bangkok_datetime_str()}"
-            
-            await update.message.reply_text(message, parse_mode='Markdown')
-            
-        except Exception as e:
-            logger.error(f"Error in split command: {e}")
-            await update.message.reply_text(f"❌ Có lỗi xảy ra khi tính toán chia tiền: {e}")
+    def format_split_report(self, result):
+        """Helper to format the split calculation result into Markdown"""
+        summary = result['summary']
+        sheet_name = result['sheet_name']
+        type_totals = result['type_totals']
+        expenses_by_type = result['expenses_by_type']
+        person_total_paid = result['person_total_paid']
+        person_should_pay = result['person_should_pay']
+        balances = result['balances']
+        user_groups = result['user_groups']
+        
+        message = f"💰 **TÍNH TOÁN CHIA TIỀN - {sheet_name.upper()}**\n\n"
+        message += f"📊 **Tổng chi tiêu tháng:** {summary['total']:,} VNĐ\n\n"
+        
+        message += "📋 **CHI TIẾT THEO LOẠI:**\n"
+        for type_name in ["Cả hai", "Trung", "Chung"]:
+            if type_totals[type_name] > 0:
+                members = user_groups[type_name]
+                amount_per_person = type_totals[type_name] / len(members)
+                message += f"\n🔹 **{type_name}** ({' + '.join(members)}):\n"
+                message += f"   💰 Tổng: {type_totals[type_name]:,} VNĐ\n"
+                message += f"   👤 Mỗi người: {amount_per_person:,.0f} VNĐ\n"
+                message += f"   📊 Số giao dịch: {len(expenses_by_type[type_name])}\n"
+        
+        message += f"\n👤 **TÌNH HÌNH THỰC TẾ:**\n"
+        for person in ["Trung", "Chung"]:
+            paid = person_total_paid[person]
+            should_pay = person_should_pay[person]
+            percentage = (paid / summary['total'] * 100) if summary['total'] > 0 else 0
+            message += f"• **{person}**: Đã trả {paid:,} VNĐ ({percentage:.1f}%)\n"
+            message += f"  └ Cần trả: {should_pay:,.0f} VNĐ\n"
+        
+        message += f"\n💸 **KẾT QUẢ CUỐI CÙNG:**\n"
+        debtors = []
+        creditors = []
+        for person in ["Trung", "Chung"]:
+            balance = balances[person]
+            if balance > 1000:
+                debtors.append((person, balance))
+                message += f"🔴 **{person}**: Cần trả thêm {balance:,.0f} VNĐ\n"
+            elif balance < -1000:
+                creditors.append((person, abs(balance)))
+                message += f"🟢 **{person}**: Được nhận lại {abs(balance):,.0f} VNĐ\n"
+            else:
+                message += f"⚪ **{person}**: Đã cân bằng ✅\n"
+        
+        if debtors and creditors:
+            message += f"\n💳 **GỢI Ý THANH TOÁN:**\n"
+            for d_name, d_amt in debtors:
+                for c_name, c_amt in creditors:
+                    transfer = min(d_amt, c_amt)
+                    if transfer > 0:
+                        message += f"👉 **{d_name}** chuyển cho **{c_name}**: {transfer:,.0f} VNĐ\n"
+        
+        message += f"\n💡 **Ghi chú:** Bot nhận diện tên theo Dropdown (Cả hai, Trung, Chung)\n"
+        message += f"📅 Tính toán vào: {get_bangkok_datetime_str()}"
+        return message
 
-    async def split_month_command(self, update: Update, context):
-        """Handle /split_month command - calculate money split for any month"""
+    async def split_command(self, update, context):
+        """Handle /split command"""
         try:
-            # Check if month name is provided
-            text = update.message.text[12:].strip()  # Remove '/split_month ' prefix
-            
-            if not text:
-                # Show available months
-                worksheets = self.workbook.worksheets()
-                month_sheets = [ws for ws in worksheets if 'Tháng' in ws.title]
-                
-                if not month_sheets:
-                    await update.message.reply_text("❌ Chưa có sheet tháng nào!")
-                    return
-                
-                message = "📅 **CHỌN THÁNG ĐỂ TÍNH CHIA TIỀN:**\n\n"
-                message += "💡 **Cách sử dụng:** `/split_month [tên tháng]`\n\n"
-                message += "📋 **Các tháng có sẵn:**\n"
-                
-                for i, sheet in enumerate(month_sheets, 1):
-                    summary = self.get_monthly_summary(sheet.title)
-                    if summary and summary['total'] > 0:
-                        message += f"{i}. `{sheet.title}` - {summary['total']:,} VNĐ ({summary['count']} giao dịch)\n"
-                    else:
-                        message += f"{i}. `{sheet.title}` - Chưa có dữ liệu\n"
-                
-                message += f"\n💡 **Ví dụ:** `/split_month Tháng 9 2025`"
-                message += f"\n🔄 **Tháng hiện tại:** `/split`"
-                
-                await update.message.reply_text(message, parse_mode='Markdown')
-                return
-            
-            # Calculate split for specified month
-            result, error = self.calculate_money_split_for_sheet(text)
-            
+            result, error = self.calculate_money_split_for_sheet()
             if error:
                 await update.message.reply_text(error)
                 return
-            
-            # Use the same formatting as current month split
-            summary = result['summary']
-            type_totals = result['type_totals']
-            expenses_by_type = result['expenses_by_type']
-            person_total_paid = result['person_total_paid']
-            person_should_pay = result['person_should_pay']
-            balances = result['balances']
-            user_groups = result['user_groups']
-            sheet_name = result['sheet_name']
-            
-            # Format response message
-            message = f"💰 **TÍNH TOÁN CHIA TIỀN THEO LOẠI - {sheet_name.upper()}**\n\n"
-            message += f"📊 **Tổng chi tiêu tháng:** {summary['total']:,} VNĐ\n\n"
-            
-            # Show breakdown by type
-            message += "📋 **CHI TIẾT THEO LOẠI:**\n"
-            for type_num in [1, 2, 3, 4]:
-                if type_totals[type_num] > 0:
-                    members = user_groups[type_num]
-                    amount_per_person = type_totals[type_num] / len(members)
-                    
-                    message += f"\n🔹 **Loại {type_num}** ({' + '.join(members)}):\n"
-                    message += f"   💰 Tổng: {type_totals[type_num]:,} VNĐ\n"
-                    message += f"   👤 Mỗi người: {amount_per_person:,.0f} VNĐ\n"
-                    message += f"   📊 Số giao dịch: {len(expenses_by_type[type_num])}\n"
-            
-            message += f"\n👤 **TÌNH HÌNH THỰC TẾ:**\n"
-            for person in ["Nhật", "Trung", "Tài"]:
-                paid = person_total_paid[person]
-                should_pay = person_should_pay[person]
-                percentage = (paid / summary['total'] * 100) if summary['total'] > 0 else 0
-                message += f"• **{person}**: Đã trả {paid:,} VNĐ ({percentage:.1f}%)\n"
-                message += f"  └ Cần trả: {should_pay:,.0f} VNĐ\n"
-            
-            message += f"\n💸 **KẾT QUẢ CUỐI CÙNG:**\n"
-            
-            # Find who owes money and who should receive money
-            debtors = []  # People who owe money
-            creditors = []  # People who should receive money
-            
-            for person, balance in balances.items():
-                if balance > 1000:  # Owe money (threshold 1000 VND to avoid small amounts)
-                    debtors.append((person, balance))
-                    message += f"🔴 **{person}**: Cần trả thêm {balance:,.0f} VNĐ\n"
-                elif balance < -1000:  # Should receive money
-                    creditors.append((person, abs(balance)))
-                    message += f"🟢 **{person}**: Được nhận lại {abs(balance):,.0f} VNĐ\n"
-                else:
-                    message += f"⚪ **{person}**: Đã cân bằng ✅\n"
-            
-            # Show payment suggestions
-            if debtors and creditors:
-                message += f"\n💡 **GỢI Ý THANH TOÁN:**\n"
-                
-                # Simple debt settlement algorithm
-                debtors_copy = debtors.copy()
-                creditors_copy = creditors.copy()
-                
-                transaction_count = 0
-                while debtors_copy and creditors_copy and transaction_count < 10:
-                    debtor_name, debt_amount = debtors_copy[0]
-                    creditor_name, credit_amount = creditors_copy[0]
-                    
-                    transfer_amount = min(debt_amount, credit_amount)
-                    
-                    message += f"💳 **{debtor_name}** → **{creditor_name}**: {transfer_amount:,.0f} VNĐ\n"
-                    
-                    # Update amounts
-                    new_debt = debt_amount - transfer_amount
-                    new_credit = credit_amount - transfer_amount
-                    
-                    if new_debt <= 1000:
-                        debtors_copy.pop(0)
-                    else:
-                        debtors_copy[0] = (debtor_name, new_debt)
-                    
-                    if new_credit <= 1000:
-                        creditors_copy.pop(0)
-                    else:
-                        creditors_copy[0] = (creditor_name, new_credit)
-                    
-                    transaction_count += 1
-            
-            message += f"\n📝 **CHÚ THÍCH:**\n"
-            message += f"• Loại 1: 3 người cùng dùng (chia đều 3)\n"
-            message += f"• Loại 2: Trung + Tài dùng (chia đôi)\n"
-            message += f"• Loại 3: Trung + Nhật dùng (chia đôi)\n"
-            message += f"• Loại 4: Nhật + Tài dùng (chia đôi)\n\n"
-            message += f"� **Lưu ý:** Bot tự động nhận diện tên (không phân biệt hoa/thường)\n"
-            message += f"�📅 Tính toán vào: {get_bangkok_datetime_str()}\n"
-            message += f"💡 **Tip:** Gõ `/split_month` để xem danh sách tháng"
-            
+            message = self.format_split_report(result)
             await update.message.reply_text(message, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error in split command: {e}")
+            await update.message.reply_text(f"❌ Lỗi: {e}")
+
+    async def split_month_command(self, update, context):
+        """Handle /split_month command"""
+        try:
+            text = update.message.text[12:].strip()
+            if not text:
+                worksheets = self.workbook.worksheets()
+                month_sheets = [ws for ws in worksheets if 'Tháng' in ws.title]
+                if not month_sheets:
+                    await update.message.reply_text("❌ Chưa có sheet tháng nào!")
+                    return
+                message = "📅 **CHỌN THÁNG ĐỂ TÍNH CHIA TIỀN:**\n\n"
+                for i, sheet in enumerate(month_sheets, 1):
+                    message += f"{i}. `{sheet.title}`\n"
+                message += f"\n💡 Ví dụ: `/split_month {month_sheets[0].title if month_sheets else 'Tháng 5 2026'}`"
+                await update.message.reply_text(message, parse_mode='Markdown')
+                return
             
+            result, error = self.calculate_money_split_for_sheet(text)
+            if error:
+                await update.message.reply_text(error)
+                return
+            message = self.format_split_report(result)
+            message += f"\n💡 **Tip:** Gõ `/split_month` để xem danh sách tháng"
+            await update.message.reply_text(message, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Error in split_month command: {e}")
-            await update.message.reply_text(f"❌ Có lỗi xảy ra khi tính toán chia tiền: {e}")
-
-def main():
+            await update.message.reply_text(f"❌ Lỗi: {e}")
+\ndef main():
     """Main function"""
     try:
         bot = AdvancedTelegramBot()

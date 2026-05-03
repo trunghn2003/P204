@@ -30,4 +30,4 @@ echo "✅ Environment checks passed"
 echo "🔄 Starting bot..."
 
 # Run the bot
-python telegram_bot.py
+python advanced_bot.py

@@ -36,7 +36,7 @@ class GoogleSheetsSetup:
     
     def setup_headers(self):
         """Thiết lập tiêu đề cột"""
-        headers = ['Ngày', 'Mô tả', 'Số tiền', 'Danh mục', 'Người chi', 'Ghi chú']
+        headers = ['Ngày', 'Mô tả', 'Số tiền', 'Danh mục', 'Người chi', 'Ghi chú', 'Loại']
         
         try:
             # Xóa tất cả dữ liệu hiện tại
@@ -46,7 +46,7 @@ class GoogleSheetsSetup:
             self.sheet.insert_row(headers, 1)
             
             # Format header
-            self.sheet.format('A1:F1', {
+            self.sheet.format('A1:G1', {
                 "backgroundColor": {
                     "red": 0.2,
                     "green": 0.4,
@@ -69,6 +69,127 @@ class GoogleSheetsSetup:
                 
         except Exception as e:
             print(f"❌ Lỗi thiết lập header: {e}")
+    
+    def setup_data_validation(self):
+        """Thiết lập Dropdown cho các cột"""
+        try:
+            print("🛠️  Đang thiết lập Dropdown (Data Validation)...")
+            
+            # 1. Danh mục (Cột D)
+            categories = ["Ăn uống", "Di chuyển", "Giải trí", "Học tập", "Hóa đơn", "Nhà cửa", "Sức khỏe", "Khác"]
+            # 2. Người chi (Cột E)
+            people = ["Trung", "Chung"]
+            # 3. Loại (Cột G)
+            types = ["1", "2", "3"]
+            
+            # Helper function to set validation
+            def set_validation(range_str, values):
+                from gspread.utils import rowcol_to_a1
+                # This requires gspread >= 5.0.0 which supports data validation
+                # However, gspread basic validation is limited. We'll use the API format.
+                
+                # For now, let's just print that we are doing it. 
+                # Actually, I'll use the body for batch update to set validation rules.
+                pass
+
+            # Since setting validation via gspread is a bit complex (requires body update), 
+            # I will provide a simpler version that works if gspread version is compatible
+            # or just skip if it fails.
+            
+            # Let's try to use the set_data_validation method if available
+            # Note: Many gspread versions don't have a direct method. 
+            # I'll implement it using the batch_update API.
+            
+            body = {
+                "requests": [
+                    # Validation for Date (Column A, index 0)
+                    {
+                        "setDataValidation": {
+                            "range": {
+                                "sheetId": self.sheet.id,
+                                "startRowIndex": 1,
+                                "endRowIndex": 1000,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 1
+                            },
+                            "rule": {
+                                "condition": {
+                                    "type": "DATE_IS_VALID"
+                                },
+                                "showCustomUi": True,
+                                "strict": True
+                            }
+                        }
+                    },
+                    # Validation for Category (Column D, index 3)
+                    {
+                        "setDataValidation": {
+                            "range": {
+                                "sheetId": self.sheet.id,
+                                "startRowIndex": 1,
+                                "endRowIndex": 1000,
+                                "startColumnIndex": 3,
+                                "endColumnIndex": 4
+                            },
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [{"userEnteredValue": v} for v in categories]
+                                },
+                                "showCustomUi": True,
+                                "strict": True
+                            }
+                        }
+                    },
+                    # Validation for Person (Column E, index 4)
+                    {
+                        "setDataValidation": {
+                            "range": {
+                                "sheetId": self.sheet.id,
+                                "startRowIndex": 1,
+                                "endRowIndex": 1000,
+                                "startColumnIndex": 4,
+                                "endColumnIndex": 5
+                            },
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [{"userEnteredValue": v} for v in people]
+                                },
+                                "showCustomUi": True,
+                                "strict": True
+                            }
+                        }
+                    },
+                    # Validation for Type (Column G, index 6)
+                    {
+                        "setDataValidation": {
+                            "range": {
+                                "sheetId": self.sheet.id,
+                                "startRowIndex": 1,
+                                "endRowIndex": 1000,
+                                "startColumnIndex": 6,
+                                "endColumnIndex": 7
+                            },
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [{"userEnteredValue": v} for v in types]
+                                },
+                                "showCustomUi": True,
+                                "strict": True
+                            }
+                        }
+                    }
+                ]
+            }
+            
+            self.gc.open_by_key(self.sheets_id).batch_update(body)
+            print("✅ Đã thiết lập Dropdown cho cột Danh mục, Người chi và Loại!")
+            
+        except Exception as e:
+            print(f"⚠️  Cảnh báo: Không thể thiết lập Dropdown tự động: {e}")
+            print("💡 Bạn có thể thiết lập thủ công trong Google Sheets (Data > Data Validation).")
     
     def add_sample_data(self):
         """Thêm dữ liệu mẫu"""
@@ -149,7 +270,8 @@ def main():
             print("2. Thêm dữ liệu mẫu") 
             print("3. Thêm dòng mới")
             print("4. Xem dữ liệu hiện tại")
-            print("5. Thoát")
+            print("5. Thiết lập Dropdown (Data Validation)")
+            print("6. Thoát")
             
             choice = input("\n👉 Nhập lựa chọn (1-5): ").strip()
             
@@ -183,6 +305,9 @@ def main():
                 setup.show_current_data()
                 
             elif choice == '5':
+                setup.setup_data_validation()
+                
+            elif choice == '6':
                 print("\n👋 Tạm biệt!")
                 break
                 
