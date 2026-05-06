@@ -581,6 +581,8 @@ class AdvancedTelegramBot:
         self.application.add_handler(CommandHandler('export', self.export_command))
         self.application.add_handler(CommandHandler('topspenders', self.topspenders_command))
         self.application.add_handler(CommandHandler('topcategories', self.topcategories_command))
+        self.application.add_handler(CommandHandler('report', self.report_command))
+        self.application.add_handler(CommandHandler('history', self.history_command))
         self.application.add_handler(conv_handler)
         self.application.add_handler(budget_handler)
         self.application.add_handler(search_handler)
@@ -602,7 +604,9 @@ class AdvancedTelegramBot:
             "• `/add` - Thêm chi phí (tương tác)\n"
             "• `/quick` - Thêm nhanh (một dòng)\n"
             "• `/budget` - Quản lý ngân sách\n"
-            "• `/summary` - Tổng kết tháng hiện tại\n\n"
+            "• `/summary` - Tổng kết tháng hiện tại\n"
+            "• `/report` - Báo cáo chi tiết từng người\n"
+            "• `/history` - Lịch sử thu chi các tháng\n\n"
             "🔍 **Tìm kiếm & Phân tích:**\n"
             "• `/search` - Tìm kiếm giao dịch\n"
             "• `/filter` - Lọc theo điều kiện\n"
@@ -699,6 +703,8 @@ class AdvancedTelegramBot:
             "   `/week` - Chi tiêu tuần này\n"
             "   `/daily` - Chi tiêu theo từng ngày\n"
             "   `/month` - Danh sách tất cả các tháng\n"
+            "   `/history` - Xem lịch sử chi tiêu tổng quát\n"
+            "   `/report` - Báo cáo chi tiết từng người (thu/chi)\n"
             "   `/topspenders` - Top người chi tiêu nhiều nhất\n"
             "   `/topcategories` - Top danh mục chi tiêu\n\n"
             "🔹 **Quản lý ngân sách:**\n"
@@ -2387,7 +2393,180 @@ class AdvancedTelegramBot:
         except Exception as e:
             logger.error(f"Error in split_month command: {e}")
             await update.message.reply_text(f"❌ Lỗi: {e}")
-\ndef main():
+
+    async def report_command(self, update: Update, context):
+        """Handle /report command - detailed report for each person"""
+        try:
+            # Get split data
+            result, error = self.calculate_money_split_for_sheet()
+            if error:
+                await update.message.reply_text(error)
+                return
+            
+            sheet_name = result['sheet_name']
+            summary = result['summary']
+            person_total_paid = result['person_total_paid']
+            person_should_pay = result['person_should_pay']
+            balances = result['balances']
+            
+            # Get more detailed data for category breakdown per person
+            # We need to re-scan for per-person category totals
+            sheet = self.current_sheet
+            all_data = sheet.get_all_values()[1:]
+            
+            person_category_spending = {"Trung": {}, "Chung": {}}
+            for row in all_data:
+                if len(row) >= 5 and row[2].strip():
+                    try:
+                        amount = int(row[2].replace(',', ''))
+                        person_paid_raw = row[4].strip().lower()
+                        category = row[3].strip() if row[3].strip() else "Khác"
+                        
+                        actual_person = None
+                        if "trung" in person_paid_raw: actual_person = "Trung"
+                        elif "chung" in person_paid_raw: actual_person = "Chung"
+                        
+                        if actual_person:
+                            if category not in person_category_spending[actual_person]:
+                                person_category_spending[actual_person][category] = 0
+                            person_category_spending[actual_person][category] += amount
+                    except:
+                        continue
+
+            message = f"📊 **BÁO CÁO CHI TIẾT - {sheet_name.upper()}**\n\n"
+            message += f"💰 **Tổng chi tiêu chung:** {summary['total']:,} VNĐ\n"
+            message += f"📝 **Số giao dịch:** {summary['count']} lần\n"
+            message += "───────────────────\n\n"
+            
+            for person in ["Trung", "Chung"]:
+                paid = person_total_paid[person]
+                used = person_should_pay[person]
+                balance = balances[person]
+                
+                status_emoji = "🟢" if balance <= 0 else "🔴"
+                status_text = "Dư (đã chi nhiều hơn)" if balance < 0 else "Thiếu (cần trả thêm)"
+                if abs(balance) < 1000:
+                    status_emoji = "⚪"
+                    status_text = "Cân bằng"
+                
+                message += f"👤 **NGƯỜI CHI: {person.upper()}**\n"
+                message += f"💵 **Đã bỏ tiền túi:** {paid:,} VNĐ\n"
+                message += f"📉 **Phần thực dùng:** {used:,.0f} VNĐ\n"
+                message += f"{status_emoji} **Trạng thái:** {abs(balance):,.0f} VNĐ ({status_text})\n\n"
+                
+                # Top categories for this person
+                categories = person_category_spending[person]
+                if categories:
+                    message += f"🔝 **Top danh mục đã trả:**\n"
+                    sorted_cats = sorted(categories.items(), key=lambda x: x[1], reverse=True)[:3]
+                    for cat, amt in sorted_cats:
+                        message += f"  • {cat}: {amt:,} VNĐ\n"
+                else:
+                    message += f"📝 *Chưa có ghi nhận chi tiêu trực tiếp*\n"
+                
+                message += "\n───────────────────\n\n"
+            
+            # Add Top 5 most expensive items
+            all_data_with_desc = []
+            for row in all_data:
+                if len(row) >= 3 and row[2].strip():
+                    try:
+                        amount = int(row[2].replace(',', ''))
+                        desc = row[1] if len(row) > 1 else "Không có mô tả"
+                        person = row[4] if len(row) > 4 else "Không rõ"
+                        all_data_with_desc.append({'amount': amount, 'desc': desc, 'person': person})
+                    except:
+                        continue
+            
+            if all_data_with_desc:
+                message += "🔝 **TOP 5 GIAO DỊCH LỚN NHẤT:**\n"
+                sorted_exp = sorted(all_data_with_desc, key=lambda x: x['amount'], reverse=True)[:5]
+                for i, item in enumerate(sorted_exp, 1):
+                    message += f"{i}. {item['desc']}: {item['amount']:,} VNĐ ({item['person']})\n"
+                message += "\n───────────────────\n\n"
+
+            # Add insight comparison if available
+            try:
+                # Comparison with previous month (simple)
+                worksheets = self.workbook.worksheets()
+                month_sheets = [ws for ws in worksheets if 'Tháng' in ws.title]
+                if len(month_sheets) >= 2:
+                    # Find current sheet index
+                    curr_idx = -1
+                    for i, s in enumerate(month_sheets):
+                        if s.title == sheet_name:
+                            curr_idx = i
+                            break
+                    
+                    if curr_idx > 0:
+                        prev_sheet = month_sheets[curr_idx - 1]
+                        prev_summary = self.get_monthly_summary(prev_sheet.title)
+                        if prev_summary and prev_summary['total'] > 0:
+                            diff = summary['total'] - prev_summary['total']
+                            diff_percent = (diff / prev_summary['total'] * 100)
+                            trend = "Tăng" if diff > 0 else "Giảm"
+                            trend_emoji = "📈" if diff > 0 else "📉"
+                            message += f"{trend_emoji} **So với {prev_sheet.title}:**\n"
+                            message += f"  {trend} {abs(diff):,} VNĐ ({abs(diff_percent):.1f}%)\n\n"
+            except:
+                pass
+                
+            message += f"📅 Cập nhật: {get_bangkok_datetime_str()}"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in report command: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Lỗi khi tạo báo cáo: {e}")
+
+    async def history_command(self, update: Update, context):
+        """Handle /history command - show spending history across all months"""
+        try:
+            worksheets = self.workbook.worksheets()
+            month_sheets = [ws for ws in worksheets if 'Tháng' in ws.title]
+            
+            if not month_sheets:
+                await update.message.reply_text("❌ Chưa có dữ liệu tháng nào!")
+                return
+            
+            message = "📈 **LỊCH SỬ CHI TIÊU TỔNG QUÁT**\n\n"
+            
+            total_all_time = 0
+            count_all_time = 0
+            month_data = []
+            
+            for sheet in month_sheets:
+                summary = self.get_monthly_summary(sheet.title)
+                if summary and summary['total'] > 0:
+                    month_data.append({
+                        'title': sheet.title,
+                        'total': summary['total'],
+                        'count': summary['count']
+                    })
+                    total_all_time += summary['total']
+                    count_all_time += summary['count']
+            
+            if not month_data:
+                await update.message.reply_text("❌ Chưa có dữ liệu chi tiêu để thống kê!")
+                return
+            
+            # Show last 12 months or all if less
+            for data in month_data[-12:]:
+                message += f"📅 **{data['title']}**\n"
+                message += f"   💰 {data['total']:,} VNĐ ({data['count']} GD)\n\n"
+            
+            message += "───────────────────\n"
+            message += f"📊 **TỔNG CỘNG TẤT CẢ:**\n"
+            message += f"💰 **Tổng chi:** {total_all_time:,} VNĐ\n"
+            message += f"📝 **Tổng giao dịch:** {count_all_time} lần\n"
+            message += f"📈 **Trung bình/tháng:** {total_all_time/len(month_data):,.0f} VNĐ\n"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in history command: {e}")
+            await update.message.reply_text("❌ Có lỗi xảy ra khi lấy lịch sử!")
+def main():
     """Main function"""
     try:
         bot = AdvancedTelegramBot()

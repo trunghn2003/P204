@@ -80,7 +80,7 @@ class GoogleSheetsSetup:
             # 2. Người chi (Cột E)
             people = ["Trung", "Chung"]
             # 3. Loại (Cột G)
-            types = ["1", "2", "3"]
+            types = ["Cả hai", "Trung", "Chung"]
             
             # Helper function to set validation
             def set_validation(range_str, values):
@@ -192,13 +192,14 @@ class GoogleSheetsSetup:
             print("💡 Bạn có thể thiết lập thủ công trong Google Sheets (Data > Data Validation).")
     
     def add_sample_data(self):
-        """Thêm dữ liệu mẫu"""
+        """Thêm dữ liệu mẫu cho Trung và Chung"""
         sample_data = [
-            ['05/08/2025', 'Ăn trưa', '50000', 'Ăn uống', 'Hoàng Việt', 'Cơm văn phòng'],
-            ['05/08/2025', 'Xăng xe', '200000', 'Di chuyển', 'Hoàng Việt', 'Đổ đầy bình'],
-            ['05/08/2025', 'Cafe', '35000', 'Giải trí', 'Anh Tài', 'Với bạn bè'],
-            ['05/08/2025', 'Mua sách', '150000', 'Học tập', 'Chị Hoa', 'Sách lập trình'],
-            ['05/08/2025', 'Tiền điện', '300000', 'Hóa đơn', 'Gia đình', 'Tiền điện tháng 8']
+            # Ngày, Mô tả, Số tiền, Danh mục, Người chi, Ghi chú, Loại
+            ['05/05/2026', 'Ăn sáng phở', '100000', 'Ăn uống', 'Trung', 'Phở Thìn', 'Cả hai'],
+            ['05/05/2026', 'Đi siêu thị', '500000', 'Nhà cửa', 'Chung', 'Winmart', 'Cả hai'],
+            ['05/05/2026', 'Mua game Steam', '250000', 'Giải trí', 'Trung', 'Elden Ring', 'Trung'],
+            ['05/05/2026', 'Trà sữa', '60000', 'Ăn uống', 'Chung', 'The Alley', 'Chung'],
+            ['05/05/2026', 'Tiền điện', '800000', 'Hóa đơn', 'Trung', 'Tháng 5', 'Cả hai']
         ]
         
         try:
@@ -211,10 +212,10 @@ class GoogleSheetsSetup:
         except Exception as e:
             print(f"❌ Lỗi thêm dữ liệu mẫu: {e}")
     
-    def add_custom_row(self, date, description, amount, category, person, note=""):
+    def add_custom_row(self, date, description, amount, category, person, note="", row_type="Cả hai"):
         """Thêm dòng dữ liệu tùy chỉnh"""
         try:
-            row_data = [date, description, str(amount), category, person, note]
+            row_data = [date, description, str(amount), category, person, note, row_type]
             self.sheet.append_row(row_data)
             print(f"✅ Đã thêm: {description} - {amount:,} VNĐ ({person})")
             return True
