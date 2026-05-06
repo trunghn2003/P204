@@ -2409,39 +2409,67 @@ class AdvancedTelegramBot:
             person_should_pay = result['person_should_pay']
             balances = result['balances']
             
-            # Get more detailed data for category breakdown per person
-            # We need to re-scan for per-person category totals
+            # Get more detailed data for category breakdown and "who paid for whom"
             sheet = self.current_sheet
             all_data = sheet.get_all_values()[1:]
             
             person_category_spending = {"Trung": {}, "Chung": {}}
+            person_paid_for_whom = {
+                "Trung": {"Trung": 0, "Chung": 0, "Cả hai": 0},
+                "Chung": {"Trung": 0, "Chung": 0, "Cả hai": 0}
+            }
+            
             for row in all_data:
                 if len(row) >= 5 and row[2].strip():
                     try:
                         amount = int(row[2].replace(',', ''))
                         person_paid_raw = row[4].strip().lower()
                         category = row[3].strip() if row[3].strip() else "Khác"
+                        expense_type = row[6].strip() if len(row) > 6 else "Cả hai"
+                        
+                        # Backward compatibility for type
+                        if expense_type == "1": expense_type = "Cả hai"
+                        elif expense_type == "2": expense_type = "Trung"
+                        elif expense_type == "3": expense_type = "Chung"
                         
                         actual_person = None
                         if "trung" in person_paid_raw: actual_person = "Trung"
                         elif "chung" in person_paid_raw: actual_person = "Chung"
                         
                         if actual_person:
+                            # Category breakdown
                             if category not in person_category_spending[actual_person]:
                                 person_category_spending[actual_person][category] = 0
                             person_category_spending[actual_person][category] += amount
+                            
+                            # Who paid for whom breakdown
+                            if expense_type in person_paid_for_whom[actual_person]:
+                                person_paid_for_whom[actual_person][expense_type] += amount
+                            else:
+                                # Default to "Cả hai" if type is unknown
+                                person_paid_for_whom[actual_person]["Cả hai"] += amount
                     except:
                         continue
 
             message = f"📊 **BÁO CÁO CHI TIẾT - {sheet_name.upper()}**\n\n"
             message += f"💰 **Tổng chi tiêu chung:** {summary['total']:,} VNĐ\n"
             message += f"📝 **Số giao dịch:** {summary['count']} lần\n"
+            
+            # Daily stats
+            today = get_current_bangkok_time()
+            day_num = today.day
+            avg_per_day = summary['total'] / day_num
+            projected = avg_per_day * 30
+            
+            message += f"📅 **Trung bình/ngày:** {avg_per_day:,.0f} VNĐ\n"
+            message += f"🔮 **Dự báo cuối tháng:** {projected:,.0f} VNĐ\n"
             message += "───────────────────\n\n"
             
             for person in ["Trung", "Chung"]:
                 paid = person_total_paid[person]
                 used = person_should_pay[person]
                 balance = balances[person]
+                other_person = "Chung" if person == "Trung" else "Trung"
                 
                 status_emoji = "🟢" if balance <= 0 else "🔴"
                 status_text = "Dư (đã chi nhiều hơn)" if balance < 0 else "Thiếu (cần trả thêm)"
@@ -2450,7 +2478,14 @@ class AdvancedTelegramBot:
                     status_text = "Cân bằng"
                 
                 message += f"👤 **NGƯỜI CHI: {person.upper()}**\n"
-                message += f"💵 **Đã bỏ tiền túi:** {paid:,} VNĐ\n"
+                message += f"💵 **Tổng đã trả:** {paid:,} VNĐ\n"
+                
+                # Paid for whom breakdown
+                breakdown = person_paid_for_whom[person]
+                message += f"  ├─ Trả cho mình: {breakdown[person]:,} VNĐ\n"
+                message += f"  ├─ Trả hộ {other_person}: {breakdown[other_person]:,} VNĐ\n"
+                message += f"  └─ Trả cho cả hai: {breakdown['Cả hai']:,} VNĐ\n"
+                
                 message += f"📉 **Phần thực dùng:** {used:,.0f} VNĐ\n"
                 message += f"{status_emoji} **Trạng thái:** {abs(balance):,.0f} VNĐ ({status_text})\n\n"
                 
